@@ -36,7 +36,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             verify_ssl=True,
             base_url="/services",
             protocol_binding=None,
-            content_binding="xml",
+            content_binding=None,
             max_result_count=10000):
 
         result_size = 100
@@ -45,15 +45,16 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             protocol_bindings.append("urn:taxii.mitre.org:protocol:http:1.0")
         if not protocol_binding or protocol_binding == "https":
             protocol_bindings.append("urn:taxii.mitre.org:protocol:https:1.0")
+        content_bindings = []
+        if not content_binding or content_binding == "xml":
+            content_bindings.append(entities.ContentBindingEntity(
+                "urn:stix.mitre.org:xml:1.1.1"))
         if not content_binding or content_binding == "json":
-            self.content_binding = entities.ContentBindingEntity(
-                "urn:custom.example.com:json:0.0.1")
-        else:
-            self.content_binding = entities.ContentBindingEntity(
-                "urn:stix.mitre.org:xml:1.1.1")
+            content_bindings.append(entities.ContentBindingEntity(
+                "urn:custom.example.com:json:0.0.1"))
+        content_bindings = []
         self.misp = pymisp.ExpandedPyMISP(misp_url, misp_apikey, verify_ssl)
         self.misp.global_pythonify = True
-        self.org = self.misp.get_organisation(self.misp.get_user().org_id).name
         self.services = {
             "inbox": entities.ServiceEntity(
                 id="inbox",
@@ -104,6 +105,9 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                 }
             )
         }
+        if content_bindings:
+            self.services["inbox"].properties["accept_all_content"] = False
+            self.services["inbox"].properties["supported_content"] = content_bindings
 
     def get_services(self, collection_id=None):
         log.info("TRACE: get_services")
@@ -123,20 +127,43 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def get_collections(self, service_id=None):
         log.info("TRACE: get_collections %s"%service_id)
+        if service_id == "discovery":
+            return []
         collections = []
-        if service_id != "discovery":
-            collections.append(self.get_collection(self.org, service_id=None))
+        misp = pymisp.ExpandedPyMISP(
+            self.misp.root_url,
+            context.account.details.get("apikey", self.misp.key),
+            self.misp.ssl)
+        misp.global_pythonify = True
+        user = misp.get_user()
+        org = misp.get_organisation(user.org_id)
+        collections.append(self.get_collection(org.name, service_id))
+        collections.append(self.get_collection("user_id%s"%user.id, service_id))
+        for tag in misp.tags():
+            #if tag.org_id in (0, org.id) or tag.user_id in (0, user.id): 
+            if tag.name.startswith("taxii:collection="):
+                name = "tag_%s"%tag.name[17:].strip('"')
+                collections.append(self.get_collection(name, service_id))
         return collections
 
     def get_collection(self, name, service_id=None):
         log.info("TRACE: get_collection")
+        description = "Collection for MISP "
+        if name.startswith("tag_"):
+            description += "Tag: taxii:collection=\"%s\""%name[4:]
+        elif name.startswith("user_"):
+            description += "User ID: %s"%name[7:]
+        else:
+            description += "Organization: %s"%name
+        content_bindings = self.services[service_id].properties.get(
+            "supported_content", [])
         return entities.CollectionEntity(
-            id=self.org,
-            name=self.org,
+            id=name,
+            name=name,
             available=True,
-            description="Collection for MISP Organization: %s"%self.org,
-            accept_all_content=False,
-            supported_content=[self.content_binding])
+            description=description,
+            accept_all_content=(len(content_bindings) == 0),
+            supported_content=content_bindings)
 
     def update_collection(self, entity):
         log.info("TRACE: update_collection")
@@ -164,19 +191,24 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
         log.info("TRACE: get_content_blocks %s"%context.account.details)
 
+        tags = None
+        if collection_id.startswith("tag_"):
+            tags = collection_id[4:]
         misp_evts = self.misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
+            tags=collection_id[4:] if collection_id[0:4] == "tag_" else None,
             limit=limit,
             page=(int(offset / limit + 1) if limit else None))
 
         blocks = []
         for event in misp_evts:
             if event.Org.name == collection_id:
-                log.info("TRACE: get_content_blocks event %s"%event)
+                log.info("TRACE: get_content_blocks event %s"%bindings)
                 stix = pymisp.tools.stix.make_stix_package(event, to_xml=True)
                 blocks.append(entities.ContentBlockEntity(stix, event.timestamp,
-                    content_binding=self.content_binding))
+                    content_binding=entities.ContentBindingEntity(
+                        "urn:stix.mitre.org:xml:1.1.1")))
         return blocks
 
     def create_collection(self, entity):
@@ -230,15 +262,17 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             timeframe = (start, end)
         except:
             timeframe = (None, None)
+        content_bindings = self.services["poll"].properties.get(
+            "supported_content", [])
         return entities.ResultSetEntity(
             id=result_set_id,
-            collection_id=self.get_collections("pull")[0].id,
-            content_bindings=[self.content_binding],
+            collection_id=self.get_collections("poll")[0].id,
+            content_bindings=content_bindings,
             timeframe=timeframe)
 
     def get_subscription(self, subscription_id):
         log.info("TRACE: get_subscription")
-        for subscription in self.get_subscriptions("pull"):
+        for subscription in self.get_subscriptions("poll"):
             if subscription.subscription_id == subscription_id:
                 return subscription
 
