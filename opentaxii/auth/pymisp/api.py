@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from opentaxii.auth import OpenTAXIIAuthAPI
 from opentaxii.entities import Account as AccountEntity
 from opentaxii.exceptions import UnauthorizedException
+from opentaxii.local import context
 
 __all__ = ['PyMISPAPI']
 
@@ -67,8 +68,10 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         account_id = payload.get('account_id')
         if not account_id:
             return
-        user = self.misp.get_user(account_id)
-        if not user:
+        misp=pymisp.ExpandedPyMISP(self.misp.root_url,account_id,self.misp.ssl)
+        misp.global_pythonify = True
+        user = misp.get_user()
+        if not hasattr(user, "id"):
             return
         roles = {r.id:r for r in self.misp.roles()}
         return self._user_to_account(user, roles)
@@ -79,11 +82,12 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
 
     def get_accounts(self):
         log.info("TRACE: get_accounts")
+        misp = self._getPyMISP()
         try:
-            roles = {r.id:r for r in self.misp.roles()}
-            organisations = {o.id:o.name for o in self.misp.organisations()}
+            roles = {r.id:r for r in misp.roles()}
+            organisations = {o.id:o.name for o in misp.organisations()}
             return [self._user_to_account(user, roles,
-                organisations[user.org_id]) for user in self.misp.users()]
+                organisations[user.org_id]) for user in misp.users()]
         except:
             return []
 
@@ -95,7 +99,8 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         log.info("TRACE: _user_to_account")
         role = roles[user.role_id]
         if not org:
-            org = self.misp.get_organisation(user.org_id).name
+            misp = self._getPyMISP()
+            org = misp.get_organisation(user.org_id).name
         account = AccountEntity(
             id=user.id,
             username=user.email,
@@ -110,3 +115,13 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
                     account.permissions[org] = "read"
         return account
 
+    def _getPyMISP(self, pythonify=True):
+        if context.account and context.account.details.get("authkey"):
+            misp = pymisp.ExpandedPyMISP(
+                self.misp.root_url,
+                context.account.details["authkey"],
+                self.misp.ssl)
+            misp.global_pythonify = pythonify
+        else:
+            misp = self.misp
+        return misp

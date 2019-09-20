@@ -17,9 +17,6 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     Implementation will work with MISP Server.
 
-    Note: this implementation ignores ``context.account`` and does not have
-    any access rules.
-
     :param str misp_url: MISP Server URL
     :param str misp_apikey: MISP APIKEY
     :param bool verify_sql=True: if True, if False tust Cerificate.
@@ -130,11 +127,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         if service_id == "discovery":
             return []
         collections = []
-        misp = pymisp.ExpandedPyMISP(
-            self.misp.root_url,
-            context.account.details.get("apikey", self.misp.key),
-            self.misp.ssl)
-        misp.global_pythonify = True
+        misp = self._getPyMISP()
         user = misp.get_user()
         org = misp.get_organisation(user.org_id)
         collections.append(self.get_collection(org.name, service_id))
@@ -181,7 +174,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                                  end_time=None, bindings=None):
 
         log.info("TRACE: get_content_blocks_count")
-        return len([e for e in self.misp.search(
+        misp = self._getPyMISP()
+        return len([e for e in misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
             metadata=True) if e.Org.name == collection_id])
@@ -194,7 +188,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         tags = None
         if collection_id.startswith("tag_"):
             tags = collection_id[4:]
-        misp_evts = self.misp.search(
+        misp = self._getPyMISP()
+        misp_evts = misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
             tags=collection_id[4:] if collection_id[0:4] == "tag_" else None,
@@ -230,15 +225,16 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         event = pymisp.tools.stix.load_stix(entity.content)
 
         if (len(event.attributes) > 0):
+            misp = self._getPyMISP()
             evt_attributes = [(a.type, a.value) for a in event.attributes]
-            misp_evts = self.misp.search(eventinfo=event.info)
+            misp_evts = misp.search(eventinfo=event.info)
             if misp_evts:
                 for attr in misp_evts[0].attributes:
                     if (attr.type, attr.value) not in evt_attributes:
-                        self.misp.delete_attribute(attr)
-                return self.misp.update_event(event, misp_evts[0].id)
+                        misp.delete_attribute(attr)
+                return misp.update_event(event, misp_evts[0].id)
             else:
-                return self.misp.add_event(event)
+                return misp.add_event(event)
 
         return entities.ContentBlockEntity(
             entity.content,
@@ -292,3 +288,14 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             with_messages=False):
         log.info("TRACE: delete_content_blocks")
         return 0
+
+    def _getPyMISP(self, pythonify=True):
+        if context.account and context.account.details.get("authkey"):
+            misp = pymisp.ExpandedPyMISP(
+                self.misp.root_url,
+                context.account.details["authkey"],
+                self.misp.ssl)
+            misp.global_pythonify = pythonify
+        else:
+            misp = self.misp
+        return misp
