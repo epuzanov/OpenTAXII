@@ -52,6 +52,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         content_bindings = []
         self.misp = pymisp.ExpandedPyMISP(misp_url, misp_apikey, verify_ssl)
         self.misp.global_pythonify = True
+        self.to_ids = True
         self.services = {
             "inbox": entities.ServiceEntity(
                 id="inbox",
@@ -178,6 +179,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         return len([e for e in misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
+            to_ids=self.to_ids,
             metadata=True) if e.Org.name == collection_id])
 
     def get_content_blocks(self, collection_id=None, start_time=None,
@@ -193,6 +195,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
             tags=collection_id[4:] if collection_id[0:4] == "tag_" else None,
+            to_ids=self.to_ids,
             limit=limit,
             page=(int(offset / limit + 1) if limit else None))
 
