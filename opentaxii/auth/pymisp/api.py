@@ -46,13 +46,13 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         try:
             account = pymisp.ExpandedPyMISP(
                 self.misp.root_url, password, self.misp.ssl).get_user()["User"]
-            if account["email"] != username or "error" in account:
+            if "email" not in account or account["email"] != username:
                 raise UnauthorizedException
         except:
             return
         exp = datetime.utcnow() + timedelta(minutes=self.token_ttl_secs)
         return jwt.encode(
-            {'account_id': account["id"], 'exp': exp},
+            {'account_id': account["authkey"], 'exp': exp},
             self.secret)
 
     def get_account(self, token):
