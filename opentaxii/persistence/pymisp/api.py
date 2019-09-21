@@ -21,9 +21,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
     :param str misp_apikey: MISP APIKEY
     :param bool verify_sql=True: if True, if False tust Cerificate.
     :param str base_url="/services": OpenTAXII Services base URL
-    :param str protocol_binding=None: if 'http' enable HTTP, if 'https' enable HTTPS
-                                      if None enable both bindings protocols.
-    :param str content_binding="xml": Prossible values 'xml' and 'json'
+    :param str protocol_binding=None: if None enable both bindings protocols.
+    :param str content_binding=None:  if None accept all content.
     :param int max_result_count=10000: maximum returned blocks
     """
 
@@ -36,20 +35,17 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             content_binding=None,
             max_result_count=10000):
 
-        result_size = 100
-        protocol_bindings = []
-        if not protocol_binding or protocol_binding == "http":
-            protocol_bindings.append("urn:taxii.mitre.org:protocol:http:1.0")
-        if not protocol_binding or protocol_binding == "https":
-            protocol_bindings.append("urn:taxii.mitre.org:protocol:https:1.0")
-        content_bindings = []
-        if not content_binding or content_binding == "xml":
-            content_bindings.append(entities.ContentBindingEntity(
-                "urn:stix.mitre.org:xml:1.1.1"))
-        if not content_binding or content_binding == "json":
-            content_bindings.append(entities.ContentBindingEntity(
-                "urn:custom.example.com:json:0.0.1"))
-        content_bindings = []
+        result_size = 10
+        protocol_bindings = [
+            "urn:taxii.mitre.org:protocol:http:1.0",
+            "urn:taxii.mitre.org:protocol:https:1.0"]
+        content_bindings = [
+            "urn:stix.mitre.org:xml:1.1.1",
+            "urn:custom.example.com:json:0.0.1"]
+        if protocol_binding:
+            protocol_bindings = [protocol_binding]
+        if content_binding:
+            content_bindings = [content_binding]
         self.misp = pymisp.ExpandedPyMISP(misp_url, misp_apikey, verify_ssl)
         self.misp.global_pythonify = True
         self.to_ids = True
@@ -61,8 +57,9 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                     "address": "%s/inbox"%base_url,
                     "description": "MISP Inboxi Service",
                     "destination_collection_required": True,
-                    "accept_all_content": True,
+                    "accept_all_content": False,
                     "authentication_required": True,
+                    "supported_content": content_bindings,
                     "protocol_bindings": protocol_bindings
                 }
             ),
@@ -103,9 +100,6 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                 }
             )
         }
-        if content_bindings:
-            self.services["inbox"].properties["accept_all_content"] = False
-            self.services["inbox"].properties["supported_content"] = content_bindings
 
     def get_services(self, collection_id=None):
         log.info("TRACE: get_services")
