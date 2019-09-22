@@ -48,6 +48,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             content_bindings = [content_binding]
         self.misp = pymisp.ExpandedPyMISP(misp_url, misp_apikey, verify_ssl)
         self.misp.global_pythonify = True
+        self.tag = "taxii:collection=\"%s\""
         self.to_ids = True
         self.services = {
             "inbox": entities.ServiceEntity(
@@ -55,7 +56,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                 type="inbox",
                 properties={
                     "address": "%s/inbox"%base_url,
-                    "description": "MISP Inboxi Service",
+                    "description": "MISP Inbox Service",
                     "destination_collection_required": True,
                     "accept_all_content": False,
                     "authentication_required": True,
@@ -83,6 +84,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                 properties={
                     "address": "%s/collection-management"%base_url,
                     "description": "MISP Collection Management Service",
+                    "authentication_required": True,
                     "protocol_bindings": protocol_bindings
                 }
             ),
@@ -119,30 +121,17 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def get_collections(self, service_id=None):
         log.info("TRACE: get_collections %s"%service_id)
-        if service_id == "discovery":
+        if service_id == "discovery" or not context.account:
             return []
-        collections = []
-        misp = self._getPyMISP()
-        user = misp.get_user()
-        org = misp.get_organisation(user.org_id)
-        collections.append(self.get_collection(org.name, service_id))
-        collections.append(self.get_collection("user_id%s"%user.id, service_id))
-        for tag in misp.tags():
-            #if tag.org_id in (0, org.id) or tag.user_id in (0, user.id): 
-            if tag.name.startswith("taxii:collection="):
-                name = "tag_%s"%tag.name[17:].strip('"')
-                collections.append(self.get_collection(name, service_id))
-        return collections
+        return [self.get_collection(name, service_id
+            ) for name in context.account.permissions.keys()]
 
     def get_collection(self, name, service_id=None):
         log.info("TRACE: get_collection")
-        description = "Collection for MISP "
-        if name.startswith("tag_"):
-            description += "Tag: taxii:collection=\"%s\""%name[4:]
-        elif name.startswith("user_"):
-            description += "User ID: %s"%name[7:]
+        if name != "default":
+            description="MISP collection for Tag: %s"%(self.tag%name)
         else:
-            description += "Organization: %s"%name
+            description = "Default MISP Collection"
         content_bindings = self.services[service_id].properties.get(
             "supported_content", [])
         return entities.CollectionEntity(
@@ -150,16 +139,31 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             name=name,
             available=True,
             description=description,
-            accept_all_content=(len(content_bindings) == 0),
+            accept_all_content=False,
             supported_content=content_bindings)
 
     def update_collection(self, entity):
         log.info("TRACE: update_collection")
+        if entity.name == "default":
+            return
+        misp = self._getPyMISP()
+        for tag in misp.tags():
+            if tag.name == self.tag%entity.id:
+                tag.name = self.tag%entity.name
+                self._getPyMISP().update_tag(tag)
+                entity.id = entity.name
+                break
         return entity
 
     def delete_collection(self, collection_name):
         log.info("TRACE: delete_collection")
-        pass
+        if collection_name == "default":
+            return
+        misp = self._getPyMISP()
+        for tag in misp.tags():
+            if tag.name == self.tag%collection_name:
+                self._getPyMISP().delete_tag(tag)
+                break
 
     def delete_service(self, service_id):
         log.info("TRACE: delete_service")
@@ -173,38 +177,41 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         return len([e for e in misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
+            tags=self.tag%collection_id if collection_id != "default" else None,
             to_ids=self.to_ids,
-            metadata=True) if e.Org.name == collection_id])
+            metadata=True,
+            ) if event.attributes])
 
     def get_content_blocks(self, collection_id=None, start_time=None,
                            end_time=None, bindings=None, offset=0, limit=None):
 
-        log.info("TRACE: get_content_blocks %s"%context.account.details)
+        log.info("TRACE: get_content_blocks")
 
-        tags = None
-        if collection_id.startswith("tag_"):
-            tags = collection_id[4:]
         misp = self._getPyMISP()
         misp_evts = misp.search(
             date_from=start_time.isoformat() if start_time else None,
             date_to=end_time.isoformat() if end_time else None,
-            tags=collection_id[4:] if collection_id[0:4] == "tag_" else None,
+            tags=self.tag%collection_id if collection_id != "default" else None,
             to_ids=self.to_ids,
             limit=limit,
             page=(int(offset / limit + 1) if limit else None))
 
         blocks = []
         for event in misp_evts:
-            if event.Org.name == collection_id:
-                log.info("TRACE: get_content_blocks event %s"%bindings)
-                stix = pymisp.tools.stix.make_stix_package(event, to_xml=True)
-                blocks.append(entities.ContentBlockEntity(stix, event.timestamp,
-                    content_binding=entities.ContentBindingEntity(
-                        "urn:stix.mitre.org:xml:1.1.1")))
+            if not event.attributes:
+                continue
+            log.info("TRACE: get_content_blocks event %s"%bindings)
+            stix = pymisp.tools.stix.make_stix_package(event, to_xml=True)
+            blocks.append(entities.ContentBlockEntity(stix, event.timestamp,
+                content_binding=entities.ContentBindingEntity(
+                    "urn:stix.mitre.org:xml:1.1.1")))
         return blocks
 
     def create_collection(self, entity):
         log.info("TRACE: create_collection")
+        tag = pymisp.MISPTag(name=self.tag%entity.name,
+            hide_tag=False)
+        self._getPyMISP().add_tag(tag)
         return entity
 
     def set_collection_services(self, collection_id, service_ids):
@@ -222,16 +229,19 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         event = pymisp.tools.stix.load_stix(entity.content)
 
         if (len(event.attributes) > 0):
-            misp = self._getPyMISP()
+            for collection_id in collection_ids or []:
+                if collection_id != "default":
+                    event.add_tag(self.tag%collection_id)
             evt_attributes = [(a.type, a.value) for a in event.attributes]
+            misp = self._getPyMISP()
             misp_evts = misp.search(eventinfo=event.info)
             if misp_evts:
                 for attr in misp_evts[0].attributes:
                     if (attr.type, attr.value) not in evt_attributes:
                         misp.delete_attribute(attr)
-                return misp.update_event(event, misp_evts[0].id)
+                misp.update_event(event, misp_evts[0].id)
             else:
-                return misp.add_event(event)
+                misp.add_event(event)
 
         return entities.ContentBlockEntity(
             entity.content,

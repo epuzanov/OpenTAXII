@@ -74,7 +74,8 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         if not hasattr(user, "id"):
             return
         roles = {r.id:r for r in self.misp.roles()}
-        return self._user_to_account(user, roles)
+        tags=[t for t in misp.tags() if t.name[0:17]=="taxii:collection="]
+        return self._user_to_account(user, roles, tags, user.authkey)
 
     def delete_account(self, username):
         log.info("TRACE: delete_account")
@@ -85,9 +86,9 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         misp = self._getPyMISP()
         try:
             roles = {r.id:r for r in misp.roles()}
-            organisations = {o.id:o.name for o in misp.organisations()}
-            return [self._user_to_account(user, roles,
-                organisations[user.org_id]) for user in misp.users()]
+            tags = [t for t in misp.tags() if t.name[0:17]=="taxii:collection="]
+            return [self._user_to_account(user, roles, tags
+                ) for user in misp.users()]
         except:
             return []
 
@@ -95,24 +96,28 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         log.info("TRACE: update_account")
         return obj
 
-    def _user_to_account(self, user, roles, org=None):
+    def _user_to_account(self, user, roles, tags, authkey=None):
         log.info("TRACE: _user_to_account")
         role = roles[user.role_id]
-        if not org:
-            misp = self._getPyMISP()
-            org = misp.get_organisation(user.org_id).name
         account = AccountEntity(
             id=user.id,
             username=user.email,
             is_admin=role.perm_site_admin,
             permissions={},
-            authkey=user.authkey)
-        if not account.is_admin:
-            if role.perm_auth:
-                if role.perm_sighting:
-                    account.permissions[org] = "modify"
-                else:
-                    account.permissions[org] = "read"
+            authkey=authkey)
+        if role.perm_auth:
+            if role.perm_sighting:
+                perm = "modify"
+            else:
+                perm = "read"
+            account.permissions["default"] = perm
+            for tag in tags:
+                if (role.perm_site_admin or (role.perm_admin
+                        and tag.org_id in ('0', user.org_id))
+                        or (tag.org_id in ('0', user.org_id)
+                        and tag.user_id in ('0', user.id))):
+                    collection_id = tag.name[17:].strip('"')
+                    account.permissions[collection_id] = perm
         return account
 
     def _getPyMISP(self, pythonify=True):
