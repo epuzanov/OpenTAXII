@@ -1,4 +1,5 @@
 import json
+from datetime import datetime as dt
 import xml.etree.cElementTree as etree
 
 def processAddressObj(properties, attribute, as_object):
@@ -165,20 +166,24 @@ def stix_reports(xml_file):
 def stix_indicators(xml_file):
     for event, el in etree.iterparse(xml_file, ("start", "end", "start-ns")):
         if event == "start":
-            if el.tag == "{http://stix.mitre.org/Incident-1}Related_Indicator":
-                indicator = etree.Element("{http://stix.mitre.org/stix-1}Indicator")
+            if el.tag == "{http://stix.mitre.org/common-1}Indicator":
+                indicator = etree.SubElement(indicators,
+                    "{http://stix.mitre.org/stix-1}Indicator")
+                for attr in el.attrib.items():
+                    indicator.set(*attr)
             elif el.tag=="{http://stix.mitre.org/Incident-1}Related_Indicators":
-                indicators = etree.Element("{http://stix.mitre.org/stix-1}Indicators")
+                indicators = etree.SubElement(package,
+                    "{http://stix.mitre.org/stix-1}Indicators")
             elif el.tag in ("{http://stix.mitre.org/stix-1}STIX_Package"
                     "{http://stix.mitre.org/stix-1}Package"):
                 package = etree.Element("{http://stix.mitre.org/stix-1}STIX_Package")
+                for attr in el.attrib.items():
+                    package.set(*attr)
         elif event == "end":
             if el.tag in ("{http://stix.mitre.org/Indicator-2}Title",
                     "{http://stix.mitre.org/Indicator-2}Description",
                     "{http://stix.mitre.org/Indicator-2}Observable"):
                 indicator.append(el)
-            elif el.tag=="{http://stix.mitre.org/Incident-1}Related_Indicator":
-                indicators.append(indicator)
             elif el.tag == "{http://stix.mitre.org/Incident-1}Title":
                 header = etree.SubElement(package,
                     "{http://stix.mitre.org/stix-1}STIX_Header")
@@ -189,7 +194,6 @@ def stix_indicators(xml_file):
                     attrib={"{http://www.w3.org/2001/XMLSchema-instance}type":
                         "stixVocabs:PackageIntentVocab-1.0"}).text="Indicators"
             elif el.tag == "{http://stix.mitre.org/stix-1}Package":
-                package.append(indicators)
                 yield etree.tostring(package)
         elif event == "start-ns":
             etree.register_namespace(*el)
@@ -197,17 +201,20 @@ def stix_indicators(xml_file):
 def misp_events(xml_file):
     return_stix_pakage = True
     as_object = False
+    isotime = dt.now().isoformat()
     for event, el in etree.iterparse(xml_file, ("start", "end", "start-ns")):
         if event == "start":
             if el.tag in ("{http://stix.mitre.org/stix-1}Indicator",
                     "{http://stix.mitre.org/Incident-1}Related_Indicator",
                     "{http://cybox.mitre.org/cybox-2}Related_Object"):
+                isotime = el.attrib.get("timestamp", isotime)
                 attr = {}
             elif el.tag == "{http://cybox.mitre.org/cybox-2}Related_Objects":
                 saved_attr = attr
                 as_object = True
             elif el.tag in ("{http://stix.mitre.org/stix-1}Package",
                     "{http://stix.mitre.org/stix-1}STIX_Package"):
+                isotime = el.attrib.get("timestamp", isotime)
                 misp_event = {"Attribute": [],
                     "Object": [],
                     "analysis": "0",
@@ -217,7 +224,11 @@ def misp_events(xml_file):
                     }
         elif event == "end":
             if el.tag in ("{http://stix.mitre.org/stix-1}Indicator",
-                    "{http://stix.mitre.org/Incident-1}Related_Indicator"):
+                    "{http://stix.mitre.org/Incident-1}Related_Indicator",
+                    "{http://cybox.mitre.org/cybox-2}Related_Object"):
+                timestamp = dt.fromisoformat(isotime).timestamp()
+                if el.tag.endswith("Related_Object") and "id" in el.attrib:
+                    attr["uuid"] = el.attrib.get("id")[-36:]
                 if "Attribute" in attr:
                     attr.pop("value", None)
                     to_ids = attr.pop("to_ids", True)
@@ -229,7 +240,8 @@ def misp_events(xml_file):
                             attr["Attribute"][idx]["disable_correlation"] = d_c
                         if "distribution" not in attr["Attribute"][idx]:
                             attr["Attribute"][idx]["distribution"] = "5"
-                    attr["timestamp"] = el.attrib.get("timestamp")
+                        attr["Attribute"][idx]["timestamp"] = timestamp
+                    attr["timestamp"] = timestamp
                     misp_event["Object"].append(attr)
                 elif "value" in attr and attr.get("type") != "other":
                     if "to_ids" not in attr:
@@ -238,7 +250,7 @@ def misp_events(xml_file):
                         attr["disable_correlation"] = False
                     if "distribution" not in attr:
                         attr["distribution"] = "5"
-                    attr["timestamp"] = el.attrib.get("timestamp")
+                    attr["timestamp"] = timestamp
                     misp_event["Attribute"].append(attr)
                 el.clear()
             elif el.tag == "{http://cybox.mitre.org/cybox-2}Properties":
@@ -265,10 +277,6 @@ def misp_events(xml_file):
             elif el.tag == "{http://cybox.mitre.org/cybox-2}Object":
                 if "id" in el.attrib:
                     attr["uuid"] = el.attrib.get("id")[-36:]
-            elif el.tag == "{http://cybox.mitre.org/cybox-2}Related_Object":
-                if "id" in el.attrib:
-                    attr["uuid"] = el.attrib.get("id")[-36:]
-                misp_event["Object"].append(attr)
             elif el.tag == "{http://cybox.mitre.org/cybox-2}Related_Objects":
                 attr = saved_attr
                 as_object = False
@@ -280,11 +288,13 @@ def misp_events(xml_file):
                 if not misp_event["info"]:
                     misp_event["info"] = el.text
             elif el.tag == "{http://stix.mitre.org/stix-1}Package":
+                misp_event["timestamp"] = dt.fromisoformat(isotime).timestamp()
                 if not misp_event["info"]:
                     misp_event["info"] = "STIX Indicators"
                 return_stix_pakage = False
                 yield json.dumps(misp_event, indent=4, sort_keys=True)
             elif el.tag == "{http://stix.mitre.org/stix-1}STIX_Package":
+                misp_event["timestamp"] = dt.fromisoformat(isotime).timestamp()
                 if return_stix_pakage:
                     if not misp_event["info"]:
                         misp_event["info"] = "STIX Indicators"
