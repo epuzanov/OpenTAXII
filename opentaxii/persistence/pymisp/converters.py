@@ -1,3 +1,4 @@
+import copy
 import json
 from datetime import datetime as dt
 import xml.etree.cElementTree as etree
@@ -183,7 +184,8 @@ def stix_indicators(xml_file):
             if el.tag in ("{http://stix.mitre.org/Indicator-2}Title",
                     "{http://stix.mitre.org/Indicator-2}Description",
                     "{http://stix.mitre.org/Indicator-2}Observable"):
-                indicator.append(el)
+                indicator.append(copy.deepcopy(el))
+                el.clear()
             elif el.tag == "{http://stix.mitre.org/Incident-1}Title":
                 header = etree.SubElement(package,
                     "{http://stix.mitre.org/stix-1}STIX_Header")
