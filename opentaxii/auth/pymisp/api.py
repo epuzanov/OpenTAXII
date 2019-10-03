@@ -34,7 +34,6 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
             token_ttl_secs=None):
 
         self.misp = pymisp.ExpandedPyMISP(misp_url, misp_apikey, verify_ssl)
-        self.misp.global_pythonify = True
         if not secret:
             raise ValueError('Secret is not defined for %s.%s' % (
                 self.__module__, self.__class__.__name__))
@@ -69,13 +68,12 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         if not account_id:
             return
         misp=pymisp.ExpandedPyMISP(self.misp.root_url,account_id,self.misp.ssl)
-        misp.global_pythonify = True
-        user = misp.get_user()
-        if not hasattr(user, "id"):
+        user = misp.get_user().get("User", {})
+        if not user.get("id"):
             return
-        roles = {r.id:r for r in self.misp.roles()}
-        tags=[t for t in misp.tags() if t.name[0:17]=="taxii:collection="]
-        return self._user_to_account(user, roles, tags, user.authkey)
+        roles = {r["Role"]["id"]:r["Role"] for r in misp.roles()}
+        tags=[t for t in misp.tags() if t["name"][:17]=="taxii:collection="]
+        return self._user_to_account(user, roles, tags, user["authkey"])
 
     def delete_account(self, username):
         log.info("TRACE: delete_account")
@@ -85,9 +83,9 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         log.info("TRACE: get_accounts")
         misp = self._getPyMISP()
         try:
-            roles = {r.id:r for r in misp.roles()}
-            tags = [t for t in misp.tags() if t.name[0:17]=="taxii:collection="]
-            return [self._user_to_account(user, roles, tags
+            roles = {r["Role"]["id"]:r["Role"] for r in misp.roles()}
+            tags = [t for t in misp.tags() if t["name"][:15]=="taxii:collectio"]
+            return [self._user_to_account(user["User"], roles, tags
                 ) for user in misp.users()]
         except:
             return []
@@ -98,29 +96,29 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
 
     def _user_to_account(self, user, roles, tags, authkey=None):
         log.info("TRACE: _user_to_account")
-        role = roles[user.role_id]
+        role = roles[user["role_id"]]
         account = AccountEntity(
-            id=user.id,
-            username=user.email,
-            is_admin=role.perm_site_admin,
+            id=user["id"],
+            username=user["email"],
+            is_admin=role["perm_site_admin"],
             permissions={},
             authkey=authkey)
-        if role.perm_auth:
-            if role.perm_sighting:
+        if role["perm_auth"]:
+            if role["perm_sighting"]:
                 perm = "modify"
             else:
                 perm = "read"
             account.permissions["default"] = perm
             for tag in tags:
-                if (role.perm_site_admin or (role.perm_admin
-                        and tag.org_id in ('0', user.org_id))
-                        or (tag.org_id in ('0', user.org_id)
-                        and tag.user_id in ('0', user.id))):
-                    collection_id = tag.name[17:].strip('"')
+                if (role["perm_site_admin"] or (role["perm_admin"]
+                        and tag["org_id"] in ('0', user["org_id"]))
+                        or (tag["org_id"] in ('0', user["org_id"])
+                        and tag["user_id"] in ('0', user["id"]))):
+                    collection_id = tag["name"][17:].strip('"')
                     account.permissions[collection_id] = perm
         return account
 
-    def _getPyMISP(self, pythonify=True):
+    def _getPyMISP(self, pythonify=False):
         if context.account and context.account.details.get("authkey"):
             misp = pymisp.ExpandedPyMISP(
                 self.misp.root_url,
