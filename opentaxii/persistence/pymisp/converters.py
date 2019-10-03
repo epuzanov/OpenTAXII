@@ -1,5 +1,4 @@
 import copy
-import json
 from datetime import datetime as dt
 import xml.etree.cElementTree as etree
 
@@ -171,7 +170,8 @@ def stix_reports(xml_file):
         if event == "end":
             if element.tag == "{http://stix.mitre.org/stix-1}Package":
                 element.tag = "{http://stix.mitre.org/stix-1}STIX_Package"
-                yield etree.tostring(element)
+                yield etree.tostring(element), fromisoformat(
+                    element.attrib.get("timestamp") or dt.now().isoformat())
         elif event == "start-ns":
             etree.register_namespace(*element)
 
@@ -188,14 +188,17 @@ def stix_indicators(xml_file):
                     "{http://stix.mitre.org/stix-1}Indicators")
             elif el.tag in ("{http://stix.mitre.org/stix-1}STIX_Package"
                     "{http://stix.mitre.org/stix-1}Package"):
-                package = etree.Element("{http://stix.mitre.org/stix-1}STIX_Package")
+                package = etree.Element(
+                    "{http://stix.mitre.org/stix-1}STIX_Package")
                 for attr in el.attrib.items():
                     package.set(*attr)
         elif event == "end":
             if el.tag in ("{http://stix.mitre.org/Indicator-2}Title",
-                    "{http://stix.mitre.org/Indicator-2}Description",
-                    "{http://stix.mitre.org/Indicator-2}Observable"):
+                    "{http://stix.mitre.org/Indicator-2}Description"):
+                etree.SubElement(indicator, el.tag).text = el.text
+            elif el.tag == "{http://stix.mitre.org/Indicator-2}Observable":
                 indicator.append(copy.deepcopy(el))
+            elif el.tag=="{http://stix.mitre.org/Incident-1}Related_Indicators":
                 el.clear()
             elif el.tag == "{http://stix.mitre.org/Incident-1}Title":
                 header = etree.SubElement(package,
@@ -207,7 +210,8 @@ def stix_indicators(xml_file):
                     attrib={"{http://www.w3.org/2001/XMLSchema-instance}type":
                         "stixVocabs:PackageIntentVocab-1.0"}).text="Indicators"
             elif el.tag == "{http://stix.mitre.org/stix-1}Package":
-                yield etree.tostring(package)
+                yield etree.tostring(package), fromisoformat(
+                    el.attrib.get("timestamp") or dt.now().isoformat())
         elif event == "start-ns":
             etree.register_namespace(*el)
 
@@ -305,12 +309,12 @@ def misp_events(xml_file):
                 if not misp_event["info"]:
                     misp_event["info"] = "STIX Indicators"
                 return_stix_pakage = False
-                yield json.dumps(misp_event, indent=4, sort_keys=True)
+                yield {"Event": misp_event}
             elif el.tag == "{http://stix.mitre.org/stix-1}STIX_Package":
                 misp_event["timestamp"] = fromisoformat(isotime).timestamp()
                 if return_stix_pakage:
                     if not misp_event["info"]:
                         misp_event["info"] = "STIX Indicators"
-                    yield json.dumps(misp_event, indent=4, sort_keys=True)
+                    yield {"Event": misp_event}
         elif event == "start-ns":
             etree.register_namespace(*el)
