@@ -3,6 +3,17 @@ import json
 from datetime import datetime as dt
 import xml.etree.cElementTree as etree
 
+def fromisoformat(isotime):
+    tformat = "%Y-%m-%dT%H:%M:%S"
+    if "." in isotime:
+        tformat += ".%f"
+    if isotime[-6] in ("+", "-"):
+        isotime = isotime[0:-3] + isotime[-2:]
+    else:
+        isotime += "+0000"
+    tformat += "%z"
+    return dt.strptime(isotime, tformat)
+
 def processAddressObj(properties, attribute, as_object):
     for el in properties.iter():
         if el.tag.endswith("Address_Value"):
@@ -228,7 +239,7 @@ def misp_events(xml_file):
             if el.tag in ("{http://stix.mitre.org/stix-1}Indicator",
                     "{http://stix.mitre.org/Incident-1}Related_Indicator",
                     "{http://cybox.mitre.org/cybox-2}Related_Object"):
-                timestamp = dt.fromisoformat(isotime).timestamp()
+                timestamp = fromisoformat(isotime).timestamp()
                 if el.tag.endswith("Related_Object") and "id" in el.attrib:
                     attr["uuid"] = el.attrib.get("id")[-36:]
                 if "Attribute" in attr:
@@ -290,13 +301,13 @@ def misp_events(xml_file):
                 if not misp_event["info"]:
                     misp_event["info"] = el.text
             elif el.tag == "{http://stix.mitre.org/stix-1}Package":
-                misp_event["timestamp"] = dt.fromisoformat(isotime).timestamp()
+                misp_event["timestamp"] = fromisoformat(isotime).timestamp()
                 if not misp_event["info"]:
                     misp_event["info"] = "STIX Indicators"
                 return_stix_pakage = False
                 yield json.dumps(misp_event, indent=4, sort_keys=True)
             elif el.tag == "{http://stix.mitre.org/stix-1}STIX_Package":
-                misp_event["timestamp"] = dt.fromisoformat(isotime).timestamp()
+                misp_event["timestamp"] = fromisoformat(isotime).timestamp()
                 if return_stix_pakage:
                     if not misp_event["info"]:
                         misp_event["info"] = "STIX Indicators"
