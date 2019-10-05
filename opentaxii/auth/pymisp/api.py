@@ -1,6 +1,6 @@
 import jwt
 import structlog
-import pymisp
+from .spymisp import SimplifiedPyMISP as PyMISP
 
 from datetime import datetime, timedelta
 
@@ -47,7 +47,7 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
     def authenticate(self, username, password):
         log.info("TRACE: authenticate")
         try:
-            user = pymisp.ExpandedPyMISP(key=password, **self.misp_kwargs
+            user = PyMISP(key=password, **self.misp_kwargs
                 ).get_user().get("User", {})
             if user.get("email") != username or not user.get("authkey"):
                 raise UnauthorizedException
@@ -71,7 +71,7 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
         account_id = payload.get('account_id')
         if not account_id:
             return
-        misp = pymisp.ExpandedPyMISP(key=account_id, **self.misp_kwargs)
+        misp = PyMISP(key=account_id, **self.misp_kwargs)
         user = misp.get_user().get("User", {})
         if not user.get("id"):
             return

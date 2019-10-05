@@ -1,6 +1,5 @@
 import structlog
 import six
-import pymisp
 from .converters import stix_indicators, misp_events
 
 from datetime import datetime
