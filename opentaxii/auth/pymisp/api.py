@@ -34,6 +34,9 @@ class PyMISPAPI(OpenTAXIIAuthAPI):
 
     def __init__(self, **kwargs):
         kwargs.pop("key", None)
+        if not kwargs.get("url"):
+            raise ValueError('MISP URL is not defined for %s.%s' % (
+                self.__module__, self.__class__.__name__))
         self.secret = kwargs.pop("secret", None)
         if not self.secret:
             raise ValueError('Secret is not defined for %s.%s' % (
