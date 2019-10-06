@@ -239,6 +239,11 @@ def misp_events(xml_file):
                     "info": "",
                     "threat_level_id": "2"
                     }
+                package_id = el.attrib.get("id", "")
+                if len(package_id) > 36:
+                    misp_event["uuid"] = package_id[-36:]
+                    if ":" in package_id:
+                        misp_event["orgc"] = package_id.split(":")[0]
         elif event == "end":
             if el.tag in ("{http://stix.mitre.org/stix-1}Indicator",
                     "{http://stix.mitre.org/Incident-1}Related_Indicator",
