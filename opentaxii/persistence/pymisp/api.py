@@ -167,8 +167,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
         log.info("TRACE: get_content_blocks_count")
         return len([e for e in context.account.details["misp"].search(
-            date_from=start_time.isoformat() if start_time else None,
-            date_to=end_time.isoformat() if end_time else None,
+            date_from=start_time if start_time else None,
+            date_to=end_time if end_time else None,
             tags=self.tag%collection_id if collection_id != "default" else None,
             to_ids=self.to_ids,
             metadata=True,
@@ -181,8 +181,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
         misp_evts = context.account.details["misp"].search(
             return_format = "stix",
-            date_from=start_time.isoformat() if start_time else None,
-            date_to=end_time.isoformat() if end_time else None,
+            date_from=start_time if start_time else None,
+            date_to=end_time if end_time else None,
             tags=self.tag%collection_id if collection_id != "default" else None,
             to_ids=self.to_ids,
             limit=limit,
