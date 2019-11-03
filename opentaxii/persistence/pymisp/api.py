@@ -241,13 +241,14 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def create_result_set(self, entity):
         log.info("TRACE: create_result_set %s"%entity)
-        start = (entity.timeframe[0] or datetime.utcfromtimestamp(0)).timestamp()
-        end = (entity.timeframe[1] or datetime.utcfromtimestamp(0)).timestamp()
-        entity.id = "%s_%s_%s"%(entity.id, int(start), int(end))
+        if "result_sets" not in context.account.details:
+            context.account.details["result_sets"]
+        context.account.details["result_sets"][entity.id] = entity
         return entity
 
     def get_result_set(self, result_set_id):
         log.info("TRACE: get_result_set %s"%result_set_id)
+        return context.account.details["result_sets"][result_set_id]
         try:
             id, start, end = result_set_id.split("_")
             start = datetime.utcfromtimestamp(int(start)) if not "0" else None
