@@ -114,26 +114,29 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def get_collections(self, service_id=None):
         log.info("TRACE: get_collections %s"%service_id)
-        if service_id == "discovery" or not context.account:
-            return []
-        return [self.get_collection(name, service_id
-            ) for name in context.account.permissions.keys()]
+        collections = []
+        if service_id != "discovery" and context.account:
+            for id,name in enumerate(sorted(context.account.permissions.keys())):
+                if name != "default":
+                    description="MISP collection for Tag: %s"%(self.tag%name)
+                else:
+                    description = "Default MISP Collection"
+                content_bindings = self.services[service_id].properties.get(
+                    "supported_content", [])
+                collections.append(entities.CollectionEntity(
+                    id=id,
+                    name=name,
+                    available=True,
+                    description=description,
+                    accept_all_content=False,
+                    supported_content=content_bindings))
+        return collections
 
     def get_collection(self, name, service_id=None):
         log.info("TRACE: get_collection")
-        if name != "default":
-            description="MISP collection for Tag: %s"%(self.tag%name)
-        else:
-            description = "Default MISP Collection"
-        content_bindings = self.services[service_id].properties.get(
-            "supported_content", [])
-        return entities.CollectionEntity(
-            id=name,
-            name=name,
-            available=True,
-            description=description,
-            accept_all_content=False,
-            supported_content=content_bindings)
+        for collection in self.get_collections(service_id):
+            if collection.name == name:
+                return collection
 
     def update_collection(self, entity):
         log.info("TRACE: update_collection")
@@ -141,10 +144,10 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             return
         misp = context.account.details["misp"]
         for tag in misp.tags():
-            if tag["name"] == self.tag%entity.id:
+            tn = self.tag%(sorted(context.account.permissions.keys())[entity.id])
+            if tag["name"] == tn:
                 tag["name"] = self.tag%entity.name
                 misp.update_tag(tag)
-                entity.id = entity.name
                 break
         return entity
 
@@ -164,26 +167,27 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def get_content_blocks_count(self, collection_id=None, start_time=None,
                                  end_time=None, bindings=None):
-
         log.info("TRACE: get_content_blocks_count")
+        collection_name=sorted(context.account.permissions.keys())[collection_id]
+        tags=self.tag%collection_name if collection_name != "default" else None
         return len([e for e in context.account.details["misp"].search(
             date_from=start_time if start_time else None,
             date_to=end_time if end_time else None,
-            tags=self.tag%collection_id if collection_id != "default" else None,
+            tags=tags,
             to_ids=self.to_ids,
             metadata=True,
             ) if event.get("Event", {}).get("attribute_count", "0") != "0"])
 
     def get_content_blocks(self, collection_id=None, start_time=None,
                            end_time=None, bindings=None, offset=0, limit=None):
-
         log.info("TRACE: get_content_blocks")
-
+        collection_name=sorted(context.account.permissions.keys())[collection_id]
+        tags=self.tag%collection_name if collection_name != "default" else None
         misp_evts = context.account.details["misp"].search(
             return_format = "stix",
             date_from=start_time if start_time else None,
             date_to=end_time if end_time else None,
-            tags=self.tag%collection_id if collection_id != "default" else None,
+            tags=tags,
             to_ids=self.to_ids,
             limit=limit,
             page=(int(offset / limit + 1) if limit else None)).encode("utf-8")
@@ -229,9 +233,11 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
                 misp.update_event(event, event_id)
             else:
                 event_id = misp.add_event(event).get("Event", {}).get("uuid")
+            collection_names = sorted(context.account.permissions.keys())
             for collection_id in collection_ids or []:
-                if collection_id != "default":
-                    misp.tag(event_id, self.tag%collection_id)
+                collection_name = collection_names[collection_id]
+                if collection_name != "default":
+                    misp.tag(event_id, self.tag%collection_name)
 
         return entities.ContentBlockEntity(
             entity.content,
@@ -243,13 +249,14 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
         log.info("TRACE: create_result_set %s"%entity)
         start = (entity.timeframe[0] or datetime.utcfromtimestamp(0)).timestamp()
         end = (entity.timeframe[1] or datetime.utcfromtimestamp(0)).timestamp()
-        entity.id = "%s_%s_%s"%(entity.id, int(start), int(end))
+        entity.id = "%s_%s_%s_%s"%(entity.id, entity.collection_id, int(start),
+            int(end))
         return entity
 
     def get_result_set(self, result_set_id):
         log.info("TRACE: get_result_set %s"%result_set_id)
         try:
-            id, start, end = result_set_id.split("_")
+            id, collection_id, start, end = result_set_id.split("_")
             start = datetime.utcfromtimestamp(int(start)) if not "0" else None
             end = datetime.utcfromtimestamp(int(end)) if not "0" else None
             timeframe = (start, end)
@@ -259,7 +266,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             "supported_content", [])
         return entities.ResultSetEntity(
             id=result_set_id,
-            collection_id=self.get_collections("poll")[0].id,
+            collection_id=int(collection_id),
             content_bindings=content_bindings,
             timeframe=timeframe)
 
