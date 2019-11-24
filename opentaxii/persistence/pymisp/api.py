@@ -1,6 +1,7 @@
 import structlog
 import six
-from .converters import stix_indicators, misp_events
+import sqlite3
+from . import converters as conv
 
 from datetime import datetime
 from opentaxii.local import context
@@ -26,6 +27,15 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def __init__(self, **kwargs):
 
+        self._conn = sqlite3.connect("/dev/shm/result_set.db")
+        cursor = self._conn.cursor()
+        cursor.execute("""CREATE TABLE IF NOT EXISTS result_set (
+            id TEXT PRIMARY KEY,
+            collection_id INTEGER,
+            content_bindings TEXT,
+            begin_time INTEGER,
+            end_time INTEGER)""")
+        self._conn.commit()
         base_url = kwargs.get("base_url", "/services")
         protocol_binding = kwargs.get("protocol_binding")
         content_binding = kwargs.get("content_binding")
@@ -193,7 +203,7 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
             page=(int(offset / limit + 1) if limit else None)).encode("utf-8")
 
         blocks = []
-        for stix, timestamp in stix_indicators(six.BytesIO(misp_evts)):
+        for stix, timestamp in conv.stix_indicators(six.BytesIO(misp_evts)):
             log.info("TRACE: get_content_blocks event %s"%bindings)
             blocks.append(entities.ContentBlockEntity(stix, timestamp,
                 content_binding=entities.ContentBindingEntity(
@@ -217,7 +227,8 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
     def create_content_block(self, entity, collection_ids=None,
                              service_id=None):
         log.info("TRACE: create_content_block")
-        for event in misp_events(six.BytesIO(entity.content.encode("utf-8"))):
+        content = entity.content.encode("utf-8")
+        for event in conv.misp_events(six.BytesIO(content)):
             misp = context.account.details["misp"]
             event_id = event.get("uuid", "")
             if not (event_id and misp.search(uuid=event_id, metadata=True)):
@@ -247,23 +258,24 @@ class PyMISPAPI(OpenTAXIIPersistenceAPI):
 
     def create_result_set(self, entity):
         log.info("TRACE: create_result_set %s"%entity)
+        _bindings = conv.serialize_content_bindings(entity.content_bindings)
         start = (entity.timeframe[0] or datetime.utcfromtimestamp(0)).timestamp()
         end = (entity.timeframe[1] or datetime.utcfromtimestamp(0)).timestamp()
-        entity.id = "%s_%s_%s_%s"%(entity.id, entity.collection_id, int(start),
-            int(end))
+        cursor = self._conn.cursor()
+        cursor.execute("INSERT INTO result_set VALUES (?,?,?,?,?)", (entity.id,
+            entity.collection_id, _bindings, int(start), int(end)))
+        self._conn.commit()
         return entity
 
     def get_result_set(self, result_set_id):
         log.info("TRACE: get_result_set %s"%result_set_id)
-        try:
-            id, collection_id, start, end = result_set_id.split("_")
-            start = datetime.utcfromtimestamp(int(start)) if not "0" else None
-            end = datetime.utcfromtimestamp(int(end)) if not "0" else None
-            timeframe = (start, end)
-        except:
-            timeframe = (None, None)
-        content_bindings = self.services["poll"].properties.get(
-            "supported_content", [])
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT * FROM result_set WHERE id='%s'"%result_set_id)
+        id, collection_id, _bindings, start, end = cursor.fetchone()
+        content_bindings = conv.deserialize_content_bindings(_bindings)
+        start = datetime.utcfromtimestamp(int(start)) if start else None
+        end = datetime.utcfromtimestamp(int(end)) if end else None
+        timeframe = (conv.enforce_timezone(start), conv.enforce_timezone(end))
         return entities.ResultSetEntity(
             id=result_set_id,
             collection_id=int(collection_id),

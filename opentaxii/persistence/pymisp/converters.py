@@ -1,6 +1,10 @@
 import copy
+import json
+import pytz
 from datetime import datetime as dt
 import xml.etree.cElementTree as etree
+
+from opentaxii.taxii import entities
 
 def fromisoformat(isotime):
     tformat = "%Y-%m-%dT%H:%M:%S"
@@ -323,3 +327,28 @@ def misp_events(xml_file):
                     yield {"Event": misp_event}
         elif event == "start-ns":
             etree.register_namespace(*el)
+
+def serialize_content_bindings(content_bindings):
+    return json.dumps([(c.binding, c.subtypes) for c in content_bindings])
+
+
+def deserialize_content_bindings(content_bindings):
+    raw_bindings = json.loads(content_bindings)
+
+    bindings = []
+    for (binding, subtypes) in raw_bindings:
+        entity = entities.ContentBindingEntity(binding, subtypes=subtypes)
+        bindings.append(entity)
+
+    return bindings
+
+# SQLite does not preserve TZ information
+def enforce_timezone(date):
+
+    if not date:
+        return
+
+    if date.tzinfo:
+        return date
+
+    return date.replace(tzinfo=pytz.UTC)
